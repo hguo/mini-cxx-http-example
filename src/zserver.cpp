@@ -1,15 +1,18 @@
-#include <iostream>
+#include "zserver.h"
+#include <mutex>
+#include <fstream>
 #include <websocketpp/config/asio_no_tls.hpp>
 #include <websocketpp/server.hpp>
-#include <json.hpp>
 
 typedef websocketpp::server<websocketpp::config::asio> server;
 typedef server::message_ptr message_ptr;
-using json = nlohmann::json;
 
-server wss;
+static std::mutex mutex;
+static server wss;
+static std::thread *thread;
+static std::map<std::string, std::string> map;
 
-void onHttp(server *s, websocketpp::connection_hdl hdl) 
+static void on_http(server *s, websocketpp::connection_hdl hdl) 
 {
   server::connection_ptr con = s->get_con_from_hdl(hdl);
   con->append_header("Access-Control-Allow-Origin", "*");
@@ -17,26 +20,34 @@ void onHttp(server *s, websocketpp::connection_hdl hdl)
   
   std::string query = con->get_resource();
 
-  if (query == "/requestInfo") {
-    json j;
-    j["hello"] = "world";
-    j["number"] = 10;
+  bool found = false;
 
-    con->set_body(j.dump()); 
-    con->set_status(websocketpp::http::status_code::ok);
-  } else if (query == "/requestData") {
-    std::string results = "hello"; 
+  if (query.find("/get?") == 0) {
+    const std::string key = query.substr(query.find("?") + 1);
 
-    con->set_body(results);
-    con->set_status(websocketpp::http::status_code::ok);
-  } else {
+    if (map.find(key) != map.end()) { // found
+      mutex.lock();
+      std::ifstream ifs(map[key]);
+      mutex.unlock();
+     
+      std::stringstream buffer;
+      buffer << ifs.rdbuf();
+      ifs.close();
+
+      con->set_body(buffer.str());
+      con->set_status(websocketpp::http::status_code::ok);
+      found = true;
+    } 
+  }
+  
+  if (!found) {
     std::string response = "<html><body>404 not found</body></html>";
     con->set_body(response);
     con->set_status(websocketpp::http::status_code::not_found);
   }
 }
 
-void startServer(int port) 
+static void start_server_thread(int port)
 {
   using websocketpp::lib::placeholders::_1;
   using websocketpp::lib::placeholders::_2;
@@ -53,7 +64,7 @@ void startServer(int port)
 
     // Register our message handler
     // wss.set_message_handler(bind(&onMessage, &wss, _1, _2));
-    wss.set_http_handler(bind(&onHttp, &wss, _1));
+    wss.set_http_handler(bind(&on_http, &wss, _1));
 
     // Listen on port 9002
     wss.listen(port);
@@ -72,18 +83,28 @@ void startServer(int port)
   }
 }
 
-int main(int argc, char **argv) 
+
+///////////////////////////////////
+extern "C" {
+
+void zserver_start(int port) 
 {
-  if (argc != 2) {
-    fprintf(stderr, "Usage: %s <port>\n", argv[0]);
-    return 0;
-  }
+  thread = new std::thread(start_server_thread, port);
+}
 
-  int port = atoi(argv[1]);
-
-  std::thread *thread = new std::thread(startServer, port);
+void zserver_stop()
+{
+  wss.stop();
   thread->join();
   delete thread;
-
-  return 0;
+  // TODO
 }
+
+void zserver_commit_file(const char *key, const char *filename)
+{
+  mutex.lock();
+  map[key] = filename;
+  mutex.unlock();
+}
+
+} // extern "C"
