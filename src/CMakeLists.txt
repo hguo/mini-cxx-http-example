@@ -1,5 +1,5 @@
-# add_executable (server main.cpp)
-# target_link_libraries (server ${Boost_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
+add_executable (test_ws_server main.cpp)
+target_link_libraries (test_ws_server ${Boost_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
 
 add_library (zserver zserver.cpp)
 target_link_libraries (zserver ${Boost_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
